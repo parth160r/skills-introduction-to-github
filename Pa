@@ -1,0 +1,261 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local root = character:WaitForChild("HumanoidRootPart")
+local mouse = player:GetMouse()
+
+local FLY_SPEED = 80
+local ORBIT_RADIUS = 18
+local ORBIT_SPEED = 1.4
+local MAX_OBJECTS = 120
+local HEART_SPEED = 160
+
+local flying = false
+local orbiting = true
+local heartMode = false
+local bodyGyro, bodyVelocity
+local orbitParts = {}
+local orbitConnection
+
+-- UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MobilePowerUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 210, 0, 280)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -140)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+mainFrame.BackgroundTransparency = 0.15
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 14)
+local stroke = Instance.new("UIStroke", mainFrame)
+stroke.Color = Color3.fromRGB(255, 80, 140)
+stroke.Thickness = 2
+
+local titleBar = Instance.new("TextButton")
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(255, 70, 130)
+titleBar.Text = "  POWER MENU  (Drag me)"
+titleBar.TextColor3 = Color3.new(1,1,1)
+titleBar.Font = Enum.Font.GothamBold
+titleBar.TextSize = 14
+titleBar.AutoButtonColor = false
+titleBar.Parent = mainFrame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 14)
+
+-- Dragging
+local dragging, dragStart, startPos = false, nil, nil
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+	end
+end)
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+local function createToggle(name, y, on)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -24, 0, 42)
+	btn.Position = UDim2.new(0, 12, 0, y)
+	btn.BackgroundColor3 = on and Color3.fromRGB(60, 200, 100) or Color3.fromRGB(50, 50, 70)
+	btn.Text = name .. (on and "  : ON" or "  : OFF")
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 15
+	btn.AutoButtonColor = false
+	btn.Parent = mainFrame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+	return btn
+end
+
+local flyBtn = createToggle("Fly", 50, false)
+local orbitBtn = createToggle("Orbit Objects", 102, true)
+local heartBtn = createToggle("Heart Mode", 154, false)
+
+local shootBtn = Instance.new("TextButton")
+shootBtn.Size = UDim2.new(1, -24, 0, 48)
+shootBtn.Position = UDim2.new(0, 12, 0, 210)
+shootBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 130)
+shootBtn.Text = "SHOOT HEART"
+shootBtn.TextColor3 = Color3.new(1,1,1)
+shootBtn.Font = Enum.Font.GothamBold
+shootBtn.TextSize = 16
+shootBtn.AutoButtonColor = false
+shootBtn.Parent = mainFrame
+Instance.new("UICorner", shootBtn).CornerRadius = UDim.new(0, 12)
+
+-- Fly
+local function startFly()
+	if flying then return end
+	flying = true
+	humanoid.PlatformStand = true
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.P = 9e4
+	bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	bodyGyro.CFrame = root.CFrame
+	bodyGyro.Parent = root
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	bodyVelocity.Parent = root
+	local cam = workspace.CurrentCamera
+	RunService:BindToRenderStep("Fly", Enum.RenderPriority.Camera.Value, function()
+		if not flying or not root then return end
+		local move = Vector3.zero
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then move += cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then move -= cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then move -= cam.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then move += cam.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.yAxis end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then move -= Vector3.yAxis end
+		bodyVelocity.Velocity = move.Magnitude > 0 and move.Unit * FLY_SPEED or Vector3.zero
+		bodyGyro.CFrame = cam.CFrame
+	end)
+end
+
+local function stopFly()
+	flying = false
+	RunService:UnbindFromRenderStep("Fly")
+	humanoid.PlatformStand = false
+	if bodyGyro then bodyGyro:Destroy() end
+	if bodyVelocity then bodyVelocity:Destroy() end
+end
+
+-- Orbit
+local function collectObjects()
+	orbitParts = {}
+	local count = 0
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if count >= MAX_OBJECTS then break end
+		if obj:IsA("BasePart") and not obj:IsDescendantOf(character) and not obj.Anchored and obj.Transparency < 1 and obj.Size.Magnitude < 40 then
+			table.insert(orbitParts, obj)
+			count += 1
+		end
+	end
+end
+
+local function startOrbit()
+	if orbitConnection then return end
+	collectObjects()
+	local angle = 0
+	orbitConnection = RunService.Heartbeat:Connect(function(dt)
+		if not orbiting or not root then return end
+		angle += ORBIT_SPEED * dt
+		local center = root.Position
+		for i, part in ipairs(orbitParts) do
+			if part and part.Parent then
+				local a = angle + (i / #orbitParts) * math.pi * 2
+				local pos = center + Vector3.new(math.cos(a) * ORBIT_RADIUS, math.sin(a * 2 + i) * 4, math.sin(a) * ORBIT_RADIUS)
+				part.CFrame = CFrame.new(pos) * CFrame.Angles(0, a, 0)
+				part.AssemblyLinearVelocity = Vector3.zero
+				part.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+	end)
+end
+
+local function stopOrbit()
+	if orbitConnection then
+		orbitConnection:Disconnect()
+		orbitConnection = nil
+	end
+end
+
+-- Heart
+local function shootHeart()
+	local heart = Instance.new("Part")
+	heart.Size = Vector3.new(1.4, 1.4, 0.4)
+	heart.Color = Color3.fromRGB(255, 60, 110)
+	heart.Material = Enum.Material.Neon
+	heart.CanCollide = false
+	heart.CFrame = CFrame.new(root.Position + root.CFrame.LookVector * 5)
+	heart.Parent = workspace
+
+	local mesh = Instance.new("SpecialMesh", heart)
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Scale = Vector3.new(1.3, 1.1, 0.35)
+
+	local a0 = Instance.new("Attachment", heart)
+	a0.Position = Vector3.new(0, 0.4, 0)
+	local a1 = Instance.new("Attachment", heart)
+	a1.Position = Vector3.new(0, -0.4, 0)
+	local trail = Instance.new("Trail", heart)
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Color = ColorSequence.new(Color3.fromRGB(255, 80, 140))
+	trail.Lifetime = 0.4
+
+	heart.AssemblyLinearVelocity = (mouse.Hit.Position - root.Position).Unit * HEART_SPEED
+	task.delay(5, function() if heart then heart:Destroy() end end)
+end
+
+-- Buttons
+flyBtn.MouseButton1Click:Connect(function()
+	if flying then
+		stopFly()
+		flyBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+		flyBtn.Text = "Fly  : OFF"
+	else
+		startFly()
+		flyBtn.BackgroundColor3 = Color3.fromRGB(60, 200, 100)
+		flyBtn.Text = "Fly  : ON"
+	end
+end)
+
+orbitBtn.MouseButton1Click:Connect(function()
+	orbiting = not orbiting
+	if orbiting then
+		startOrbit()
+		orbitBtn.BackgroundColor3 = Color3.fromRGB(60, 200, 100)
+		orbitBtn.Text = "Orbit Objects  : ON"
+	else
+		stopOrbit()
+		orbitBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+		orbitBtn.Text = "Orbit Objects  : OFF"
+	end
+end)
+
+heartBtn.MouseButton1Click:Connect(function()
+	heartMode = not heartMode
+	heartBtn.BackgroundColor3 = heartMode and Color3.fromRGB(60, 200, 100) or Color3.fromRGB(50, 50, 70)
+	heartBtn.Text = "Heart Mode  : " .. (heartMode and "ON" or "OFF")
+end)
+
+shootBtn.MouseButton1Click:Connect(function()
+	if heartMode then shootHeart() end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe or not heartMode then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		local objs = player.PlayerGui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y)
+		for _, v in ipairs(objs) do
+			if v:IsDescendantOf(mainFrame) then return end
+		end
+		shootHeart()
+	end
+end)
+
+task.wait(1)
+startOrbit()
+print("Mobile Power UI Loaded")
